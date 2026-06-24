@@ -1,0 +1,101 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data cache (downloaded from Drive)
+.data_cache/
+
+# Auto-downloaded datasets (torchvision/torch_geometric fetch on first run)
+data/mlfp05/mnist/
+data/mlfp05/fashion_mnist/
+data/mlfp05/cifar10/
+data/mlfp05/cora/
+data/mlfp05/agnews/
+
+# Smoke-test cache: notebook runners create data/ inside the notebook
+# directory because Colab's `/content` is the canonical CWD. These are
+# downloaded artifacts, never source.
+modules/mlfp05/colab-selfcontained/ex_*/data/
+modules/mlfp05/colab-selfcontained-solutions/ex_*/data/
+
+# ML artifacts
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+mlruns/
+catboost_info/
+checkpoints/
+lightning_logs/
+
+# Classroom exercises (face-to-face only, not open-source)
+classroom/
+
+# Claude Code
+.claude/worktrees/
+.claude/learning/observations.jsonl
+
+# CC observability hooks write a localised .claude/learning/ at the
+# CWD they're invoked from — strip from anywhere in the tree, not
+# only the repo root.
+**/.claude/learning/
+**/.claude/.coc-sync-marker
+
+# MCP / Playwright artifacts
+.mcp.json
+.playwright-mcp/
+
+# Kailash ML model artifacts (from exercise runs)
+.kailash_ml/
+mlartifacts/
+
+# Audit screenshots and exercise output artifacts
+outputs/
+
+# Test venv from exercise validation
+.test_venv/
+
+# Stray output files from exercise runs
+ex*_*.html
+ex*_*.onnx
+ex_*_*.png
+*.db
+*.db-shm
+*.db-wal
+mlfp*_experiments.db
+data/mlfp06/
+screenshots/
+
+# Generated PDFs (large binaries — build locally)
+pdf/
+scripts/pdf-build.log
+
+# Data cache
+.data_cache/

@@ -1,0 +1,200 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mlfp"
+version = "0.1.0"
+description = "ML Foundations for Professionals — Terrene Open Academy course powered by the Kailash Python SDK"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+authors = [
+    { name = "Terrene Foundation" },
+]
+readme = "README.md"
+keywords = ["machine-learning", "kailash", "course", "training", "polars", "ml-foundations"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Education",
+]
+dependencies = [
+    # Kailash platform — floors at PyPI-live tips (synced 2026-06-22)
+    "kailash>=2.44.1",
+    "kailash-ml>=2.2.2",
+    "kailash-dataflow>=2.12.0",
+    "kailash-nexus>=2.11.0",
+    "kailash-kaizen>=2.28.0",
+    "kaizen-agents>=0.9.11",
+    "kailash-pact>=0.14.1",
+    "kailash-align>=0.7.3",
+    "kailash-mcp>=0.2.15",
+    # Data
+    "polars>=1.0",
+    "pyarrow>=14.0",
+    # Scientific computing
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "scikit-learn>=1.4",
+    # Classical ML — used by M3 model zoo and gradient boosting
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "catboost>=1.2",
+    "imbalanced-learn>=0.12",
+    "shap>=0.45",
+    # Bayesian hyperparameter search — kailash-ml lazily imports optuna
+    # for HyperparameterSearch(strategy='bayesian') used in M3 ex_7/03
+    "optuna>=3.6",
+    # M3 model explainability (ex_6/03)
+    "lime>=0.2",
+    # M4 clustering + dimensionality reduction + topic modelling
+    "hdbscan>=0.8.33",
+    "umap-learn>=0.5",
+    "bertopic>=0.16",
+    # Deep learning — required by M5 (autoencoders, CNN, RNN, transformer, GAN, GNN, RL)
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "pytorch-lightning>=2.2",
+    "gymnasium>=0.29",
+    "torch-geometric>=2.5",
+    # Real-world datasets — M5 exercises hit real data, not toys
+    "yfinance>=0.2.40",
+    "datasets>=3.0",
+    # Association rules — used by M4.5 market basket
+    "mlxtend>=0.23",
+    # Visualization
+    "plotly>=5.18",
+    # Data loading from Google Drive
+    "gdown>=5.0",
+    # Environment
+    "python-dotenv>=1.0",
+    "onnxscript>=0.6.2",
+    # M6 Ollama bootstrap — preflight reachability check + Colab daemon install
+    "httpx>=0.27",
+    # M6 — kaizen BaseAgent's Ollama provider requires the ollama client lib
+    # (the Delegate/httpx path does not, so this only surfaces in the ex_5/ex_6
+    # BaseAgent specialist exercises). Declared explicitly per Declared=Imported.
+    "ollama>=0.4",
+    # M6 LLM Observatory — Rich-formatted report() default (specs/m6-diagnostics-design.md)
+    "rich>=13.0",
+    # M6 — LLM Observatory diagnostics stack
+    #
+    # Output lens (classical + LLM-as-judge metrics for generation):
+    "deepeval>=2.0",
+    "ragas>=0.2",
+    # trulens-eval moved to [trulens] extra — its trulens-dashboard pin
+    # (psutil<6) conflicts with kailash>=2.8.9 (psutil>=7), and the
+    # optional `trulens_scores()` helper routes through OpenAI which is
+    # blocked by Redline 14 (M6 is Ollama-only). Keep ragas + deepeval
+    # as the primary RAG eval path.
+    "sacrebleu>=2.4",
+    "rouge-score>=0.1.2",
+    "bert-score>=0.3.13",
+    # Retrieval lens — ragas + trulens-eval reused.
+    # Attention lens (mechanistic interpretability, open-weight models only):
+    "transformer-lens>=2.0",
+    "sae-lens>=3.0",
+    # Agent trace lens (OTEL + Langfuse self-hosted):
+    "langfuse>=2.0",
+    "opentelemetry-api>=1.30",
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp>=1.30",
+    # Alignment lens (lm-evaluation-harness for MMLU / HellaSwag / TruthfulQA):
+    "lm-eval>=0.4",
+]
+
+[project.optional-dependencies]
+notebooks = [
+    "jupyter>=1.0",
+    "nbformat>=5.9",
+    "ipywidgets>=8.0",
+]
+dl = [
+    "kailash-ml[dl]",
+]
+rl = [
+    "kailash-ml[rl]",
+]
+agents = [
+    "kailash-ml[agents]",
+]
+full = [
+    "kailash-ml[all]",
+    "jupyter>=1.0",
+    "nbformat>=5.9",
+    "ipywidgets>=8.0",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "nbval>=0.11",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["shared"]
+
+[tool.uv]
+# Universal resolution backtracks llvmlite/numba to Python-3.9-era versions
+# because shap caps them on darwin-x86_64 (`llvmlite<0.46`, `numba<0.63`).
+# The course targets arm64 macOS / Linux and requires Python >=3.13, so we
+# override the caps to force modern releases with Py3.13 wheels.
+override-dependencies = [
+    "llvmlite>=0.44",
+    "numba>=0.61",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+# Mirrors pyrightconfig.json for tools (Pylance, some CLI paths) that read
+# pyproject.toml's [tool.pyright] directly. Keep both in sync.
+#
+# Tell Pyright/Pylance to use the project .venv so kailash, kailash_ml, etc.
+# resolve correctly. Without this, VSCode's Pylance falls back to system
+# Python and shows spurious "Import could not be resolved" errors on every
+# kailash_* import in the course materials.
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+pythonPlatform = "Darwin"
+include = ["modules", "shared", "scripts", "tests"]
+exclude = [
+    "**/__pycache__",
+    "**/.venv",
+    "**/node_modules",
+    "**/.test_venv",
+    "**/.data_cache",
+    "modules/mlfp06/local",
+]
+# Course material is teaching code, not production SDK — relax the strictness
+# so harmless polars/torch type-narrowing warnings don't drown the real signal.
+# Student ____ placeholders in local/ files are the main reason for the
+# reportUndefinedVariable and assignment/call/argument suppressions.
+reportMissingImports = "warning"
+reportGeneralTypeIssues = "warning"
+reportAssignmentType = "none"
+reportCallIssue = "none"
+reportArgumentType = "none"
+reportOptionalMemberAccess = "none"
+reportUndefinedVariable = "none"
+# torch.X (tensor/from_numpy/cat/einsum/etc) flagged "private" because
+# torch's __init__.py omits __all__; these are documented public API.
+# Same applies to a handful of matplotlib re-exports. Disabling project-wide
+# is the right tradeoff for course code; real misuse is caught by
+# reportAttributeAccessIssue elsewhere.
+reportPrivateImportUsage = "none"

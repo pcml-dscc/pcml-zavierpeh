@@ -1,0 +1,42 @@
+# Copyright 2026 Terrene Foundation
+# SPDX-License-Identifier: Apache-2.0
+"""
+MLFP01 — Assessment Task 3: Window Functions & Price Trends
+
+Complete the `solve()` function. Read problem.md for the full specification.
+This task is about correct window partitioning and ordering.
+
+    python grader.py starter.py
+"""
+from __future__ import annotations
+
+import polars as pl
+
+from shared import MLFPDataLoader
+
+
+def solve() -> pl.DataFrame:
+    """Per-town, per-year HDB price-trend table (7 columns).
+
+    See problem.md for the exact columns and the four window computations
+    (YoY % within town, 3-year rolling average within town, rank within year).
+    """
+    loader = MLFPDataLoader()
+    df = loader.load("mlfp01", "hdb_resale.parquet")
+
+    # TODO 1: derive sale_year from "month" ("YYYY-MM").
+    # TODO 2: aggregate to one row per (town, sale_year): median_price =
+    #         median(resale_price), n_sales = row count.
+    # TODO 3: yoy_pct  <- 100 * (median - prev_year_median) / prev_year_median,
+    #         computed WITHIN each town ordered by year (null for first year).
+    # TODO 4: rolling_3yr_avg <- 3-year trailing mean of median_price WITHIN
+    #         town (min_periods=1).
+    # TODO 5: price_rank_in_year <- rank of median_price WITHIN each year,
+    #         descending so 1 = most expensive town (method="min").
+    # TODO 6: select the 7 columns in order, sort by [town, sale_year].
+
+    return df  # <- replace with your 7-column trend table
+
+
+if __name__ == "__main__":
+    print(solve().head())
