@@ -9,6 +9,9 @@ privilege-escalation test. This task is fully deterministic (no LLM).
 """
 from __future__ import annotations
 
+import os
+import tempfile
+
 from kailash.trust.pact.envelopes import MonotonicTighteningError
 from pact import (
     CommunicationConstraintConfig,
@@ -21,7 +24,7 @@ from pact import (
     TemporalConstraintConfig,
 )
 
-from shared.mlfp06.ex_7 import compile_governance
+from shared.mlfp06.ex_7 import ORG_YAML, compile_governance
 
 # D/T/R addresses for the four agent roles and their delegators.
 AGENT_ADDRESSES = {
@@ -51,33 +54,121 @@ CASES = [
 ]
 
 
+def _envelope(
+    envelope_id: str,
+    clearance: ConfidentialityLevel,
+    max_spend_usd: float,
+    allowed_actions: list[str],
+) -> ConstraintEnvelopeConfig:
+    return ConstraintEnvelopeConfig(
+        id=envelope_id,
+        description=envelope_id,
+        confidentiality_clearance=clearance,
+        financial=FinancialConstraintConfig(max_spend_usd=max_spend_usd),
+        operational=OperationalConstraintConfig(
+            allowed_actions=allowed_actions,
+            blocked_actions=[],
+        ),
+        temporal=TemporalConstraintConfig(blackout_periods=[]),
+        data_access=DataAccessConstraintConfig(
+            read_paths=["/*"],
+            write_paths=[],
+            blocked_data_types=[],
+        ),
+        communication=CommunicationConstraintConfig(allowed_channels=["internal"]),
+        max_delegation_depth=3,
+    )
+
+
 def solve() -> dict:
     """Compile the org, attach envelopes, run verify_action, test escalation.
 
     See problem.md for the exact envelope specs and the return contract:
         {"org_stats": {...}, "verdicts": [bool x10], "escalation_caught": bool}
     """
-    # TODO 1: Compile the organisation with compile_governance() -> (engine, org).
-    #         Read org.n_agents / org.n_delegations / org.n_departments.
+    yaml_path = os.path.join(tempfile.gettempdir(), "sg_fintech_org_assessment.yaml")
+    with open(yaml_path, "w", encoding="utf-8") as f:
+        f.write(ORG_YAML)
+    engine, org = compile_governance(yaml_path)
+    org_stats = {
+        "n_agents": int(org.n_agents),
+        "n_delegations": int(org.n_delegations),
+        "n_departments": int(org.n_departments),
+    }
 
-    # TODO 2: Build a ConstraintEnvelopeConfig for each of the four roles
-    #         (all 5 dimensions populated). Attach each to the engine via
-    #         engine.set_role_envelope(RoleEnvelope(...)) using the addresses
-    #         above. Budgets + allowed actions are in problem.md.
+    role_specs = {
+        "data_analyst": (
+            "chief_ml_officer",
+            ConfidentialityLevel.RESTRICTED,
+            20.0,
+            ["read_data", "summarise_data", "generate_report"],
+        ),
+        "model_trainer": (
+            "chief_ml_officer",
+            ConfidentialityLevel.RESTRICTED,
+            100.0,
+            ["train_model", "evaluate_model", "read_data"],
+        ),
+        "risk_assessor": (
+            "chief_risk_officer",
+            ConfidentialityLevel.RESTRICTED,
+            200.0,
+            ["read_data", "audit_model", "generate_report", "access_audit_log"],
+        ),
+        "customer_agent": (
+            "vp_customer",
+            ConfidentialityLevel.PUBLIC,
+            5.0,
+            ["answer_question", "search_faq"],
+        ),
+    }
 
-    # TODO 3: For each case in CASES (in order), call
-    #         engine.verify_action(role_address=..., action=..., context={"cost": ...})
-    #         and append verdict.allowed (a bool) to a verdicts list.
+    for role, (delegator, clearance, budget, actions) in role_specs.items():
+        engine.set_role_envelope(
+            RoleEnvelope(
+                id=f"{role}_role_envelope",
+                defining_role_address=DELEGATOR_ADDRESSES[delegator],
+                target_role_address=AGENT_ADDRESSES[role],
+                envelope=_envelope(f"{role}_envelope", clearance, budget, actions),
+            )
+        )
 
-    # TODO 4: Build a CONFIDENTIAL parent envelope for vp_customer and a rogue
-    #         RESTRICTED child that escalates budget + actions. Call
-    #         RoleEnvelope.validate_tightening(parent_envelope=..., child_envelope=...)
-    #         inside try/except MonotonicTighteningError; set escalation_caught.
+    verdicts = [
+        bool(
+            engine.verify_action(
+                role_address=AGENT_ADDRESSES[role],
+                action=action,
+                context={"cost": cost},
+            ).allowed
+        )
+        for role, action, cost in CASES
+    ]
+
+    parent_envelope = _envelope(
+        "vp_customer_parent",
+        ConfidentialityLevel.CONFIDENTIAL,
+        50.0,
+        ["answer_question", "search_faq"],
+    )
+    rogue_child = _envelope(
+        "rogue_customer_child",
+        ConfidentialityLevel.RESTRICTED,
+        1000.0,
+        ["answer_question", "search_faq", "read_data", "deploy_model"],
+    )
+    try:
+        RoleEnvelope.validate_tightening(
+            parent_envelope=parent_envelope,
+            child_envelope=rogue_child,
+        )
+        escalation_caught = False
+    except MonotonicTighteningError:
+        escalation_caught = True
 
     return {
-        "org_stats": {"n_agents": 0, "n_delegations": 0, "n_departments": 0},
-        "verdicts": [],
-        "escalation_caught": False,
+        "org_stats": org_stats,
+        "verdicts": verdicts,
+        "escalation_caught": escalation_caught,
     }
 
 

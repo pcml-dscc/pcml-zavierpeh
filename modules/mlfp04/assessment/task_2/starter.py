@@ -10,11 +10,15 @@ Framework-first: use DimReductionEngine (PCA) and AnomalyDetectionEngine.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import polars as pl
 
 from kailash_ml.engines.anomaly_detection import AnomalyDetectionEngine
 from kailash_ml.engines.dim_reduction import DimReductionEngine
+
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 SEED = 20260402
 N_NORMAL = 975
@@ -46,23 +50,29 @@ def solve() -> dict:
     """Compress with PCA and flag off-manifold rows — kailash-ml engines."""
     df = make_sensor_matrix()
 
-    # TODO 1: DimReductionEngine().reduce(df, algorithm="pca", n_components=df.width);
-    #         read explained_variance_ratio, take the cumulative sum, and find the
-    #         smallest count of components reaching >= 0.90. Call it n_components_90.
-    # TODO 2: reduce(df, algorithm="pca", n_components=n_components_90); read
-    #         reconstruction_error off the DimReductionResult.
-    # TODO 3: AnomalyDetectionEngine().detect(df, algorithm="isolation_forest",
-    #         contamination=CONTAMINATION); read scores and labels.
-    # TODO 4: Build anomaly_labels (1 = anomaly, 0 = normal). The engine flags
-    #         anomalies with label == -1.
-    # TODO 5: Return the dict described in problem.md (5 keys).
+    reducer = DimReductionEngine()
+    full_pca = reducer.reduce(df, algorithm="pca", n_components=df.width)
+    cumulative = np.cumsum(np.array(full_pca.explained_variance_ratio))
+    n_components_90 = int(np.searchsorted(cumulative, 0.90) + 1)
+
+    compressed = reducer.reduce(
+        df,
+        algorithm="pca",
+        n_components=n_components_90,
+    )
+    anomalies = AnomalyDetectionEngine().detect(
+        df,
+        algorithm="isolation_forest",
+        contamination=CONTAMINATION,
+    )
+    anomaly_labels = [1 if int(label) == -1 else 0 for label in anomalies.labels]
 
     return {
-        "n_components_90": df.width,
-        "reconstruction_error": 0.0,
-        "anomaly_scores": [0.0] * df.height,
-        "anomaly_labels": [0] * df.height,
-        "n_anomalies": 0,
+        "n_components_90": n_components_90,
+        "reconstruction_error": float(compressed.reconstruction_error),
+        "anomaly_scores": [float(score) for score in anomalies.scores],
+        "anomaly_labels": anomaly_labels,
+        "n_anomalies": int(sum(anomaly_labels)),
     }
 
 

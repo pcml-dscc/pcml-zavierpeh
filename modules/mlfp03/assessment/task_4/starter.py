@@ -31,6 +31,7 @@ import polars as pl
 from shared import MLFPDataLoader
 
 warnings.filterwarnings("ignore")
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 N_ROWS = 10_000
 SEED = 42
@@ -102,30 +103,101 @@ async def _run() -> dict:
     clean = frame.select(BASE_FEATURES).tail(frame.height - REFERENCE_ROWS)
     shifted = _shift_slice(clean)
 
-    # TODO 1: import ConnectionManager, DriftMonitor, ModelRegistry,
-    #         TrainingPipeline, EvalSpec, ModelSpec, FeatureField, FeatureSchema.
-    #         Build a FeatureSchema over BASE_FEATURES (entity_id_column="row_id").
-    #
-    # TODO 2: open TWO ConnectionManagers on SEPARATE temp SQLite files (one for
-    #         the registry, one for the drift monitor). Use a unique filename per
-    #         run, e.g. tempfile.gettempdir() + os.getpid() + uuid; clean up in a
-    #         finally block.
-    #
-    # TODO 3: train LightGBM via TrainingPipeline on the registry connection:
-    #         model_class="lightgbm.LGBMClassifier", framework="lightgbm",
-    #         {n_estimators:200, random_state:42, verbose:-1}; EvalSpec metrics
-    #         ["accuracy","f1","auc"], holdout, test_size=0.25.
-    #
-    # TODO 4: promote the registered version staging -> production with a reason,
-    #         then get_model(name, stage="production") to confirm.
-    #
-    # TODO 5: arm a DriftMonitor on the DRIFT connection
-    #         (tenant_id="_single", psi_threshold=PSI_THRESHOLD,
-    #         ks_threshold=KS_THRESHOLD). set_reference_data(name, reference,
-    #         BASE_FEATURES), then check_drift on `clean` and on `shifted`.
-    #
-    # TODO 6: return the dict described in the docstring.
-    return {}
+    from kailash.db import ConnectionManager
+    from kailash_ml import ModelRegistry, TrainingPipeline
+    from kailash_ml.engines.drift_monitor import DriftMonitor
+    from kailash_ml.engines.training_pipeline import EvalSpec, ModelSpec
+    from kailash_ml.types import FeatureField, FeatureSchema
+
+    schema = FeatureSchema(
+        name="premium_model_input",
+        features=[FeatureField(name=feature, dtype="float64") for feature in BASE_FEATURES],
+        entity_id_column="row_id",
+    )
+    eval_spec = EvalSpec(
+        metrics=["accuracy", "f1", "auc"],
+        split_strategy="holdout",
+        test_size=0.25,
+    )
+
+    run_id = f"{os.getpid()}_{uuid.uuid4().hex}"
+    temp_dir = Path(tempfile.gettempdir())
+    registry_path = temp_dir / f"mlfp03_task4_registry_{run_id}.db"
+    drift_path = temp_dir / f"mlfp03_task4_drift_{run_id}.db"
+    registry_conn = ConnectionManager(f"sqlite:///{registry_path.as_posix()}")
+    drift_conn = ConnectionManager(f"sqlite:///{drift_path.as_posix()}")
+
+    await registry_conn.initialize()
+    await drift_conn.initialize()
+    registry = ModelRegistry(registry_conn)
+    pipeline = TrainingPipeline(feature_store=None, registry=registry)
+    monitor = DriftMonitor(
+        drift_conn,
+        tenant_id="_single",
+        psi_threshold=PSI_THRESHOLD,
+        ks_threshold=KS_THRESHOLD,
+    )
+    model_name = "premium_lightgbm_production"
+    try:
+        result = await pipeline.train(
+            data=frame,
+            schema=schema,
+            model_spec=ModelSpec(
+                model_class="lightgbm.LGBMClassifier",
+                framework="lightgbm",
+                hyperparameters={
+                    "n_estimators": 200,
+                    "random_state": SEED,
+                    "verbose": -1,
+                },
+            ),
+            eval_spec=eval_spec,
+            experiment_name=model_name,
+        )
+        registered_version = result.model_version.version
+        await registry.promote_model(
+            name=model_name,
+            version=registered_version,
+            target_stage="production",
+            reason=(
+                f"Promote premium response model after validation: "
+                f"AUC={result.metrics.get('auc', 0.0):.4f}."
+            ),
+        )
+        production_model = await registry.get_model(model_name, stage="production")
+
+        await monitor.set_reference_data(model_name, reference, BASE_FEATURES)
+        clean_report = await monitor.check_drift(model_name, clean)
+        shifted_report = await monitor.check_drift(model_name, shifted)
+
+        clean_drifted = [
+            feature
+            for feature in clean_report.feature_results
+            if feature.drift_detected
+        ]
+        shifted_drifted = [
+            feature
+            for feature in shifted_report.feature_results
+            if feature.drift_detected
+        ]
+        return {
+            "registered_version": int(registered_version),
+            "production_stage": production_model.stage,
+            "reference_auc": float(result.metrics["auc"]),
+            "clean_drift_detected": bool(clean_report.overall_drift_detected),
+            "shift_drift_detected": bool(shifted_report.overall_drift_detected),
+            "n_drifted_features_clean": len(clean_drifted),
+            "n_drifted_features_shift": len(shifted_drifted),
+            "shift_severity": shifted_report.overall_severity,
+        }
+    finally:
+        await registry_conn.close()
+        await drift_conn.close()
+        for path in (registry_path, drift_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def solve() -> dict:

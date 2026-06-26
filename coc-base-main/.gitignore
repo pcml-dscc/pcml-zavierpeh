@@ -1,0 +1,20 @@
+# >>> coc:gitignore_additions — managed by loom /sync; do not edit between markers >>>
+.claude/operator-id
+.coc-fetch-cache
+.claude/learning/codify-lease.json
+.claude/logs/
+**/.journal-skipped.log
+.session-notes
+.session-notes.d/
+.session-notes.shared.md
+/workspaces/*
+!/workspaces/_template/
+# <<< coc:gitignore_additions <<<
+
+# Template-local: stray operator cruft swept by the hooks/** always-include
+# (matches the py/rs templates; see loom journal/0250 follow-up). Pre-existing
+# .env here is a COMMENTED placeholder template, not live secrets.
+.env
+**/.env
+.DS_Store
+**/.DS_Store
