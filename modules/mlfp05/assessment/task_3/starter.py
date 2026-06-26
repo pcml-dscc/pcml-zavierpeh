@@ -67,37 +67,46 @@ def make_dataset():
 def solve() -> dict:
     """Build + train a GRU forecaster; return predictions on the test split."""
     torch.manual_seed(SEED)
+    torch.set_num_threads(1)
     X_train, y_train, X_test, y_test, naive_pred = make_dataset()
 
-    # TODO 1: build a recurrent forecaster as a torch.nn.Module.
-    #         It MUST contain an nn.GRU (or nn.LSTM / nn.RNN).
-    #         Recipe: nn.GRU(input_size=1, hidden_size=16, batch_first=True)
-    #                 -> take the LAST timestep's hidden state -> Linear(16, 1).
     class GRUForecaster(nn.Module):
-        def __init__(self) -> None:
+        def __init__(self, mean: float, std: float) -> None:
             super().__init__()
-            # self.rnn = nn.GRU(1, 16, batch_first=True)
-            # self.head = nn.Linear(16, 1)
+            self.register_buffer("mean", torch.tensor(float(mean)))
+            self.register_buffer("std", torch.tensor(float(std)))
+            self.rnn = nn.GRU(1, 24, batch_first=True)
+            self.head = nn.Sequential(nn.Linear(24, 16), nn.ReLU(), nn.Linear(16, 1))
 
         def forward(self, x):
-            # out, _ = self.rnn(x); return self.head(out[:, -1, :]).squeeze(-1)
-            return torch.zeros(x.shape[0])  # <- replace
+            x_norm = (x - self.mean) / self.std
+            out, _ = self.rnn(x_norm)
+            pred_norm = self.head(out[:, -1, :]).squeeze(-1)
+            return pred_norm * self.std + self.mean
 
-    model = GRUForecaster()
+    train_mean = float(y_train.mean())
+    train_std = float(y_train.std() + 1e-6)
+    model = GRUForecaster(train_mean, train_std)
 
-    # TODO 2: report whether the model uses a recurrent layer (it must).
-    uses_recurrent = False  # <- replace with True once you add the GRU
+    uses_recurrent = any(
+        isinstance(module, (nn.GRU, nn.LSTM, nn.RNN)) for module in model.modules()
+    )
 
-    # TODO 3: train with MSE on (X_train, y_train).
-    #         ~60 epochs of Adam (lr=1e-3), batch size 64 works well.
-    #         loss = F.mse_loss(model(xb), yb)
-    # train_ds = TensorDataset(torch.tensor(X_train), torch.tensor(y_train))
-    # loader = DataLoader(train_ds, batch_size=64, shuffle=True)
-    # optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
-    # for epoch in range(60): ...
+    train_ds = TensorDataset(torch.tensor(X_train), torch.tensor(y_train))
+    generator = torch.Generator().manual_seed(SEED)
+    loader = DataLoader(train_ds, batch_size=64, shuffle=True, generator=generator)
+    optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
+    model.train()
+    for _epoch in range(70):
+        for xb, yb in loader:
+            optimiser.zero_grad()
+            loss = F.mse_loss(model(xb), yb)
+            loss.backward()
+            optimiser.step()
 
-    # TODO 4: predict the next value on X_test.
-    test_pred = np.zeros(len(y_test), dtype=np.float32)  # <- replace
+    model.eval()
+    with torch.no_grad():
+        test_pred = model(torch.tensor(X_test)).numpy().astype(np.float32)
 
     return {
         "model": model,

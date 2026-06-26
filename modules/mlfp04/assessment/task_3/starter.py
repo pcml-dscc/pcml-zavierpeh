@@ -103,21 +103,21 @@ def solve() -> dict:
     frame = load_documents()
     M, _vocab = build_tfidf(frame["text"].to_list())
 
-    # TODO 1: Wrap the TF-IDF matrix M in a Polars DataFrame
-    #         (pl.from_numpy(M, schema=[f"t{i}" for i in range(M.shape[1])])).
-    # TODO 2: DimReductionEngine().reduce(matrix_df, algorithm="nmf",
-    #         n_components=N_TOPICS, seed=42); read the `transformed` field
-    #         (the documents x 4 topic-weight matrix).
-    # TODO 3: doc_topics = argmax over the 4 topic weights per document.
-    # TODO 4: Compute topic_purity vs the true domains for self-reporting
-    #         (helper _purity is provided; true ids come from frame["category"]).
-    # TODO 5: Return {"doc_topics": [...], "n_topics": N_TOPICS,
-    #         "topic_purity": float}.
+    matrix_df = pl.from_numpy(M, schema=[f"t{i}" for i in range(M.shape[1])])
+    result = DimReductionEngine().reduce(
+        matrix_df,
+        algorithm="nmf",
+        n_components=N_TOPICS,
+        seed=42,
+    )
+    topic_weights = np.array(result.transformed)
+    doc_topics = topic_weights.argmax(axis=1).astype(int)
+    true_domains = np.unique(frame["category"].to_numpy(), return_inverse=True)[1]
 
     return {
-        "doc_topics": [0] * frame.height,
-        "n_topics": 1,
-        "topic_purity": 0.0,
+        "doc_topics": doc_topics.tolist(),
+        "n_topics": N_TOPICS,
+        "topic_purity": _purity(true_domains, doc_topics),
     }
 
 

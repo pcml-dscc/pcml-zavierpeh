@@ -14,6 +14,7 @@ grader independently re-trains one model to verify your table is real.
 from __future__ import annotations
 
 import asyncio
+import os
 import warnings
 
 import numpy as np
@@ -22,6 +23,7 @@ import polars as pl
 from shared import MLFPDataLoader
 
 warnings.filterwarnings("ignore")
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 N_ROWS = 10_000
 SEED = 42
@@ -104,18 +106,52 @@ def _model_frame() -> pl.DataFrame:
 
 
 async def _run_zoo() -> list[dict]:
-    # TODO 1: import ConnectionManager, ModelRegistry, TrainingPipeline,
-    #         EvalSpec, ModelSpec, FeatureField, FeatureSchema.
-    # TODO 2: build the model frame and a FeatureSchema over BASE_FEATURES with
-    #         entity_id_column="row_id".
-    # TODO 3: open an in-memory ConnectionManager, build a TrainingPipeline
-    #         (feature_store=None, registry=ModelRegistry(conn)).
-    # TODO 4: for each (name, (model_class, framework, hp)) in MODEL_ZOO, call
-    #         await pipeline.train(...) with EvalSpec metrics
-    #         ["accuracy","f1","auc"], split "holdout", test_size=0.25.
-    #         Collect {"model","accuracy","f1","auc"} per model.
-    #         Hint: always close the connection in a finally block.
-    return []
+    from kailash.db import ConnectionManager
+    from kailash_ml import ModelRegistry, TrainingPipeline
+    from kailash_ml.engines.training_pipeline import EvalSpec, ModelSpec
+    from kailash_ml.types import FeatureField, FeatureSchema
+
+    frame = _model_frame()
+    schema = FeatureSchema(
+        name="premium_model_input",
+        features=[FeatureField(name=feature, dtype="float64") for feature in BASE_FEATURES],
+        entity_id_column="row_id",
+    )
+    eval_spec = EvalSpec(
+        metrics=["accuracy", "f1", "auc"],
+        split_strategy="holdout",
+        test_size=0.25,
+    )
+
+    conn = ConnectionManager("sqlite:///:memory:")
+    await conn.initialize()
+    registry = ModelRegistry(conn)
+    pipeline = TrainingPipeline(feature_store=None, registry=registry)
+    try:
+        rows = []
+        for name, (model_class, framework, hyperparameters) in MODEL_ZOO.items():
+            result = await pipeline.train(
+                data=frame,
+                schema=schema,
+                model_spec=ModelSpec(
+                    model_class=model_class,
+                    framework=framework,
+                    hyperparameters=hyperparameters,
+                ),
+                eval_spec=eval_spec,
+                experiment_name=f"premium_response_{name}",
+            )
+            rows.append(
+                {
+                    "model": name,
+                    "accuracy": float(result.metrics["accuracy"]),
+                    "f1": float(result.metrics["f1"]),
+                    "auc": float(result.metrics["auc"]),
+                }
+            )
+        return rows
+    finally:
+        await conn.close()
 
 
 def solve() -> pl.DataFrame:

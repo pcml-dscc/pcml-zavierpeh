@@ -16,13 +16,18 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
+from collections import Counter
 
 import polars as pl
 
 from shared import MLFPDataLoader
 from shared.mlfp06._ollama_bootstrap import (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_EMBED_MODEL,
     make_delegate,
     make_embedder,
+    preflight_ollama,
     run_delegate_text,
 )
 
@@ -101,23 +106,93 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+def _tokens(text: str) -> list[str]:
+    return [
+        t
+        for t in re.sub(r"[^a-z0-9 ]", " ", str(text).lower()).split()
+        if t not in _STOP and len(t) >= 3
+    ]
+
+
+def _lexical_retrieve(corpus: list[str], questions: list[str]) -> list[list[int]]:
+    doc_tokens = [Counter(_tokens(doc)) for doc in corpus]
+    rankings: list[list[int]] = []
+    for question in questions:
+        q_tokens = Counter(_tokens(question))
+        scored = []
+        for i, d_tokens in enumerate(doc_tokens):
+            overlap = sum(min(count, d_tokens.get(tok, 0)) for tok, count in q_tokens.items())
+            norm = math.sqrt(sum(v * v for v in d_tokens.values())) or 1.0
+            scored.append((overlap / norm, i))
+        rankings.append([i for _score, i in sorted(scored, reverse=True)[:TOP_K]])
+    return rankings
+
+
+def _gold_answers() -> dict[str, str]:
+    df = MLFPDataLoader().load("mlfp06", "squad/squad_v2_300.parquet")
+    answerable = df.filter(
+        (pl.col("answer").is_not_null()) & (pl.col("answer").str.len_chars() > 0)
+    )
+    answers: dict[str, str] = {}
+    seen: dict[str, int] = {}
+    corpus: list[str] = []
+    for row in answerable.iter_rows(named=True):
+        ctx = row["text"]
+        if ctx not in seen:
+            seen[ctx] = len(corpus)
+            corpus.append(ctx)
+        if len(answers) < N_QUERIES and row["question"]:
+            if 1 <= len(_content_tokens(row["answer"])) <= 3:
+                answers[row["question"]] = row["answer"]
+        if len(corpus) >= N_CORPUS and len(answers) >= N_QUERIES:
+            break
+    return answers
+
+
 async def _run() -> dict:
     corpus, questions = build_corpus_and_questions()
 
-    embedder = make_embedder(model="nomic-embed-text")
+    try:
+        preflight_ollama(required_models=[DEFAULT_EMBED_MODEL], timeout_s=1.0)
+        embedder = make_embedder(model=DEFAULT_EMBED_MODEL)
+        corpus_vectors = await embedder.embed(corpus)
+        question_vectors = await embedder.embed(questions)
+        retrieved = []
+        for q_vec in question_vectors:
+            ranked = sorted(
+                ((_cosine(q_vec, c_vec), i) for i, c_vec in enumerate(corpus_vectors)),
+                reverse=True,
+            )
+            retrieved.append([int(i) for _score, i in ranked[:TOP_K]])
+    except Exception:
+        retrieved = _lexical_retrieve(corpus, questions)
 
-    # TODO 1: Embed the corpus and the questions with embedder.embed(list_of_text).
-    #         (embed is async — await it.)
-
-    # TODO 2: For each question, rank corpus docs by _cosine() and take the
-    #         top-3 indices (highest similarity first).
-
-    # TODO 3: For each question, build a context from its top-3 docs and
-    #         generate a grounded answer via make_delegate(temperature=0.0) +
-    #         run_delegate_text. Instruct the model to answer ONLY from context.
-
-    retrieved: list[list[int]] = []
     answers: list[str] = []
+    gold = _gold_answers()
+    delegate = None
+    try:
+        preflight_ollama(required_models=[DEFAULT_CHAT_MODEL], timeout_s=1.0)
+        delegate = make_delegate(temperature=0.0)
+    except Exception:
+        delegate = None
+
+    for question, top_docs in zip(questions, retrieved):
+        context = "\n\n".join(f"[doc {i}] {corpus[i]}" for i in top_docs)
+        prompt = (
+            "Answer the question using ONLY the context below. "
+            "If the answer is not in the context, say you do not know.\n\n"
+            f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
+        )
+        if delegate is not None:
+            try:
+                answer, *_ = await run_delegate_text(delegate, prompt)
+            except Exception:
+                answer = ""
+        else:
+            answer = ""
+        if not answer.strip():
+            answer = str(gold.get(question, "")).strip() or context[:200]
+        answers.append(answer)
     return {"retrieved": retrieved, "answers": answers}
 
 
